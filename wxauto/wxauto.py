@@ -628,17 +628,17 @@ class WeChat(WeChatBase):
         Returns:
             list: 当前聊天群成员列表
         """
-        ele = self.ChatBox.PaneControl(searchDepth=7, foundIndex=6).ButtonControl(Name='聊天信息')
+        ele = self.ChatBox.PaneControl(searchDepth=7, foundIndex=6).ButtonControl(Name=self._lang('聊天信息'))
         try:
             uia.SetGlobalSearchTimeout(1)
             rect = ele.BoundingRectangle
             Click(rect)
         except:
-            return 
+            return
         finally:
             uia.SetGlobalSearchTimeout(10)
         roominfoWnd = self.UiaAPI.Control(ClassName='SessionChatRoomDetailWnd', searchDepth=1)
-        more = roominfoWnd.ButtonControl(Name='查看更多', searchDepth=8)
+        more = roominfoWnd.ButtonControl(Name=self._lang('查看更多'), searchDepth=8)
         try:
             uia.SetGlobalSearchTimeout(1)
             rect = more.BoundingRectangle
@@ -647,8 +647,8 @@ class WeChat(WeChatBase):
             pass
         finally:
             uia.SetGlobalSearchTimeout(10)
-        members = [i.Name for i in roominfoWnd.ListControl(Name='聊天成员').GetChildren()]
-        while members[-1] in ['添加', '移出']:
+        members = [i.Name for i in roominfoWnd.ListControl(Name=self._lang('聊天成员')).GetChildren()]
+        while members and members[-1] in [self._lang('添加'), self._lang('移出')]:
             members = members[:-1]
         roominfoWnd.SendKeys('{Esc}')
         return members
