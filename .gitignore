@@ -8,4 +8,11 @@ __pycache__/
 *.ipynb
 *.bat
 @AutomationLog.txt
+
+# personal chat monitoring data - do not commit private chat logs/config
+chat_monitor/config.json
+chat_monitor/logs/
+chat_monitor/summaries/
+chat_monitor/state/
+chat_monitor/.venv*/
  
