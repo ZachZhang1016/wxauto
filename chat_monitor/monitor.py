@@ -260,8 +260,15 @@ def summarize_with_claude(chat_name, records, model, label):
     return path
 
 
-def _extract_records(msglist, senders, cur_time):
-    """把一批 Message 对象转成要落盘的记录，同时跟踪时间分隔条更新的当前时间"""
+# 图片消息的占位标记（中/英/繁客户端）
+PHOTO_MARKERS = ("[图片]", "[Photo]", "[圖片]")
+
+
+def _extract_records(msglist, senders, cur_time, pic_downloader=None, watch=None):
+    """把一批 Message 对象转成要落盘的记录，同时跟踪时间分隔条更新的当前时间。
+    pic_downloader/watch 提供时，只对重点关注人物的图片消息现场下载原图
+    （content 替换为本地路径，供信号识别读图用）——不给全群存图，
+    避免每张图都弹一次预览窗口打扰用户看盘。"""
     records = []
     for msg in msglist:
         if msg.type == "time":
@@ -270,12 +277,23 @@ def _extract_records(msglist, senders, cur_time):
         sender = getattr(msg, "sender", None)
         if senders and msg.type != "sys" and sender not in senders:
             continue
+        content = msg.content
+        if (
+            pic_downloader
+            and watch
+            and sender in watch
+            and isinstance(content, str)
+            and content.startswith(PHOTO_MARKERS)
+        ):
+            path = pic_downloader(msg)
+            if path:
+                content = path
         records.append(
             {
                 "time": cur_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "type": msg.type,
                 "sender": sender,
-                "content": msg.content,
+                "content": content,
             }
         )
     return records, cur_time
@@ -325,10 +343,25 @@ def backfill_history(wx, name, cfg, last_time, msglist=None):
     save_usedmsgid(name, chat_wnd.usedmsgid)
 
 
-def poll(wx, chats_by_name, last_time):
+def _make_pic_downloader(chat_wnd):
+    def download(msg):
+        try:
+            return chat_wnd._download_pic(msg.control)
+        except Exception as e:
+            print(f"  保存图片失败（按占位标记记录，不影响其他消息）: {e}")
+            return None
+    return download
+
+
+def poll(wx, config, chats_by_name, last_time):
     """拉取一次新消息，写入日志，返回 {chat_name: [新记录,...]}"""
     os.makedirs(LOGS_DIR, exist_ok=True)
     new_records_by_chat = {}
+
+    sa = config.get("signal_alert") or {}
+    watch = set(sa.get("watch_senders") or []) if (
+        sa.get("enabled") and sa.get("analyze_images", True)
+    ) else set()
 
     msgs_by_chatwnd = wx.GetListenMessage()
     for chat_wnd, msglist in msgs_by_chatwnd.items():
@@ -337,7 +370,11 @@ def poll(wx, chats_by_name, last_time):
         if cfg is None:
             continue
         senders = cfg.get("senders") or []
-        records, cur_time = _extract_records(msglist, senders, last_time.get(name))
+        records, cur_time = _extract_records(
+            msglist, senders, last_time.get(name),
+            pic_downloader=_make_pic_downloader(chat_wnd) if watch else None,
+            watch=watch,
+        )
         last_time[name] = cur_time
 
         if records:
@@ -801,7 +838,7 @@ def run_weekly_summary(wx, config, chat_names, model):
 
 
 def run_once(wx, config, chats_by_name, last_time, model):
-    new_records_by_chat = poll(wx, chats_by_name, last_time)
+    new_records_by_chat = poll(wx, config, chats_by_name, last_time)
     if not new_records_by_chat:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] 本次轮询无新消息")
     for name, records in new_records_by_chat.items():
@@ -825,9 +862,11 @@ def connect_and_listen(config, chats_by_name, last_time):
     for name in chats_by_name:
         for attempt in range(3):
             try:
+                # savepic 恒为 False：不给全群自动存图（每张图都要弹预览窗口，
+                # 太打扰）。重点人物的图片由 poll 里的 pic_downloader 按需下载。
                 wx.AddListenChat(
                     who=name,
-                    savepic=save_media.get("savepic", False),
+                    savepic=False,
                     savefile=save_media.get("savefile", False),
                     savevoice=save_media.get("savevoice", False),
                 )
