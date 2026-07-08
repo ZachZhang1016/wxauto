@@ -325,7 +325,7 @@ class WeChat(WeChatBase):
                 return who
             else:
                 search_result_control = self.SessionBox.GetChildren()[1].GetChildren()[1].GetFirstChildControl()
-                if not search_result_control.PaneControl(searchDepth=1).TextControl(RegexName='联系人|群聊').Exists(0.1):
+                if not search_result_control.PaneControl(searchDepth=1).TextControl(RegexName=f"{self._lang('联系人')}|{self._lang('群聊')}").Exists(0.1):
                     wxlog.debug(f'未找到搜索结果: {who}')
                     self._refresh()
                     return False

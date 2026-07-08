@@ -351,12 +351,42 @@ def _read_log_lines(chat_name):
 _notify_ok_cache = {"who": None}
 
 
+def _resolve_notify_target(wx, candidates):
+    """在会话列表里找提醒目标实际显示的名字。
+    文件传输助手在中英文客户端里显示名不同（文件传输助手 / File Transfer），
+    按另一种语言的全名走微信搜索是搜不到的，所以优先在会话列表里做
+    大小写不敏感 + 子串匹配，拿到真实条目名后 SendMsg 就能走会话列表
+    精确点击，完全不依赖搜索。"""
+    try:
+        sessions = [s for s in wx.GetSessionList(True) if s]
+    except Exception as e:
+        print(f"  读取会话列表失败，回退为直接按名字发送: {e}")
+        return None
+    for cand in candidates:
+        for s in sessions:
+            if s == cand or s.lower() == cand.lower():
+                return s
+    for cand in candidates:
+        for s in sessions:
+            if cand in s or s in cand:
+                return s
+    return None
+
+
 def send_wechat_notice(wx, config, text):
-    """给自己发一条微信（文件传输助手/File Transfer，挨个尝试）。返回是否发送成功。"""
-    targets = list(config.get("notify_to") or DEFAULT_NOTIFY_TO)
-    if _notify_ok_cache["who"] in targets:
-        targets.remove(_notify_ok_cache["who"])
-        targets.insert(0, _notify_ok_cache["who"])
+    """给自己发一条微信。优先用上次成功的目标；第一次先在会话列表里解析出
+    目标的真实显示名，解析不到再挨个尝试 notify_to 里的名字。返回是否发送成功。"""
+    candidates = list(config.get("notify_to") or DEFAULT_NOTIFY_TO)
+    targets = []
+    if _notify_ok_cache["who"]:
+        targets.append(_notify_ok_cache["who"])
+    else:
+        resolved = _resolve_notify_target(wx, candidates)
+        if resolved:
+            targets.append(resolved)
+    for cand in candidates:
+        if cand not in targets:
+            targets.append(cand)
     for who in targets:
         try:
             wx.SendMsg(text, who=who)

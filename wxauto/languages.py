@@ -60,6 +60,7 @@ MAIN_LANGUAGE = {
 
 # 其他
 '联系人': {'cn': '联系人', 'cn_t': '聯絡人', 'en': 'Contacts'},
+'群聊': {'cn': '群聊', 'cn_t': '群組', 'en': 'Group Chats'},
 }
 
 
