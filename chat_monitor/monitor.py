@@ -8,8 +8,9 @@ Markdown 摘要。
   建议 1 分钟），避免轮询太稀疏导致微信消息列表虚拟滚动把旧消息挤掉、造成漏记。
 - 交易信号提醒：每轮轮询后，对 signal_alert.watch_senders 里重点关注的人的新消息
   先做关键词预筛，命中的再交给模型确认是不是明确的入场/出场/加减仓操作，
-  确认后立刻通过"文件传输助手"发一条微信提醒自己（附原文，方便回群核实）。
-  注意：给自己发的消息手机上不会弹通知横幅，只会同步显示在文件传输助手里。
+  确认后立刻发一条微信提醒（附原文，方便回群核实）。提醒目标由 config.json 的
+  notify_to 决定（按顺序尝试，发送前会核实打开的会话名，核实不过宁可不发）：
+  发给自己的另一个账号能收到真正的手机推送横幅；发文件传输助手则只同步不推送。
 - 日内摘要：按 config.json 里的 summary_schedule（一组 {label, time} ）触发，
   每个 label 各自独立记录"上次触发到这次触发"之间的新增消息，互不影响；
   生成后顺带把总结推送到文件传输助手（push_summary 可关）。
@@ -389,8 +390,14 @@ def _open_notify_chat(wx, accept_names):
             if _current_chat_ok(wx, accept_names):
                 return s
 
-    # 搜索：文件传输助手在搜索结果里挂在"联系人/Contacts"分组下，
-    # 无论用哪种语言的名字搜，展示的都是本客户端语言的显示名
+    # 搜索兜底。点击优先级：
+    # 1) 带 <em> 高亮标记的精确匹配行——一定是真实的联系人/会话结果，
+    #    搜索建议行不会带这个标记（短名字如 "Zach" 的建议行和显示名完全同名，
+    #    只靠名字区分不开，必须优先认高亮行）；
+    # 2) 与输入关键词不同的显示名（同样不会和建议行重名，
+    #    对应文件传输助手中英文名互查的情况）；
+    # 3) 最后才试与关键词相同的名字。
+    # 点过一次后搜索面板就关了，所以每轮搜索只点一次，点完立刻核实。
     for kw in accept_names:
         try:
             wx._show()
@@ -398,18 +405,26 @@ def _open_notify_chat(wx, accept_names):
             wx.B_Search.SendKeys(kw, waitTime=1.5)
         except Exception:
             continue
-        # 先点与关键词不同的显示名（不会和"搜索建议"行重名），再试关键词本身
-        ordered = [n for n in accept_names if n != kw] + [kw]
-        for name in ordered:
+        ordered = [f"<em>{n}</em>" for n in accept_names]
+        ordered += [n for n in accept_names if n != kw] + [kw]
+        clicked = False
+        for ctrl_name in ordered:
             try:
-                ctrl = wx.SessionBox.TextControl(Name=name)
+                ctrl = wx.SessionBox.TextControl(Name=ctrl_name)
                 if not ctrl.Exists(2):
                     continue
                 ctrl.Click(simulateMove=False)
+                clicked = True
             except Exception:
                 continue
-            if _current_chat_ok(wx, accept_names):
-                return name
+            break
+        if clicked:
+            try:
+                current = wx.CurrentChat()
+            except Exception:
+                current = None
+            if _notify_name_ok(current, accept_names):
+                return current
         try:
             wx._refresh()  # 关掉搜索状态，别影响下一轮尝试
         except Exception:
@@ -426,7 +441,7 @@ def send_wechat_notice(wx, config, text):
 
     who = _open_notify_chat(wx, accept_names)
     if not who:
-        print("  没能打开并核实文件传输助手会话，提醒未发送")
+        print(f"  没能打开并核实提醒目标会话 {accept_names}，提醒未发送")
         return False
     try:
         wx.SendMsg(text)  # 发送到刚核实过的当前会话
