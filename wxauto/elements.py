@@ -74,7 +74,9 @@ class WeChatBase:
             f"[{self._lang('语音')}]",
         ]
 
-        if not [i for i in msgs if i.content[:4] in msgtypes]:
+        # 不能用 content[:4] 判断：中文 "[图片]" 恰好4字符，但英文客户端是
+        # "[Photo]"/"[File]" 等长度不一，得按完整前缀匹配
+        if not [i for i in msgs if any(i.content.startswith(t) for t in msgtypes)]:
             return msgs
 
         for msg in msgs:
