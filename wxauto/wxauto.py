@@ -313,7 +313,7 @@ class WeChat(WeChatBase):
         self._show()
         sessiondict = self.GetSessionList(True)
         if who in list(sessiondict.keys())[:-1]:
-            self.SessionBox.ListItemControl(RegexName=who).Click(simulateMove=False)
+            self.SessionBox.ListItemControl(RegexName=re.escape(who)).Click(simulateMove=False)
             return who
         else:
             self.UiaAPI.SendKeys('{Ctrl}f', waitTime=1)
@@ -325,12 +325,12 @@ class WeChat(WeChatBase):
                 return who
             else:
                 search_result_control = self.SessionBox.GetChildren()[1].GetChildren()[1].GetFirstChildControl()
-                if not search_result_control.PaneControl(searchDepth=1).TextControl(RegexName='联系人|群聊').Exists(0.1):
+                if not search_result_control.PaneControl(searchDepth=1).TextControl(RegexName=f"{self._lang('联系人')}|{self._lang('群聊')}").Exists(0.1):
                     wxlog.debug(f'未找到搜索结果: {who}')
                     self._refresh()
                     return False
                 wxlog.debug('选择搜索结果第一个')
-                target_control = search_result_control.Control(RegexName=f'.*{who}.*')
+                target_control = search_result_control.Control(RegexName=f'.*{re.escape(who)}.*')
                 chatname = target_control.Name
                 target_control.Click(simulateMove=False)
                 return chatname
@@ -571,7 +571,7 @@ class WeChat(WeChatBase):
         exists = uia.WindowControl(searchDepth=1, ClassName='ChatWnd', Name=who).Exists(maxSearchSeconds=0.1)
         if not exists:
             self.ChatWith(who)
-            self.SessionBox.ListItemControl(RegexName=who).DoubleClick(simulateMove=False)
+            self.SessionBox.ListItemControl(RegexName=re.escape(who)).DoubleClick(simulateMove=False)
         self.listen[who] = ChatWnd(who, self.language)
         self.listen[who].savepic = savepic
         self.listen[who].savefile = savefile
@@ -628,17 +628,17 @@ class WeChat(WeChatBase):
         Returns:
             list: 当前聊天群成员列表
         """
-        ele = self.ChatBox.PaneControl(searchDepth=7, foundIndex=6).ButtonControl(Name='聊天信息')
+        ele = self.ChatBox.PaneControl(searchDepth=7, foundIndex=6).ButtonControl(Name=self._lang('聊天信息'))
         try:
             uia.SetGlobalSearchTimeout(1)
             rect = ele.BoundingRectangle
             Click(rect)
         except:
-            return 
+            return
         finally:
             uia.SetGlobalSearchTimeout(10)
         roominfoWnd = self.UiaAPI.Control(ClassName='SessionChatRoomDetailWnd', searchDepth=1)
-        more = roominfoWnd.ButtonControl(Name='查看更多', searchDepth=8)
+        more = roominfoWnd.ButtonControl(Name=self._lang('查看更多'), searchDepth=8)
         try:
             uia.SetGlobalSearchTimeout(1)
             rect = more.BoundingRectangle
@@ -647,8 +647,8 @@ class WeChat(WeChatBase):
             pass
         finally:
             uia.SetGlobalSearchTimeout(10)
-        members = [i.Name for i in roominfoWnd.ListControl(Name='聊天成员').GetChildren()]
-        while members[-1] in ['添加', '移出']:
+        members = [i.Name for i in roominfoWnd.ListControl(Name=self._lang('聊天成员')).GetChildren()]
+        while members and members[-1] in [self._lang('添加'), self._lang('移出')]:
             members = members[:-1]
         roominfoWnd.SendKeys('{Esc}')
         return members

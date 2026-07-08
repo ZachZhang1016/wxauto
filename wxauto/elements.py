@@ -74,21 +74,28 @@ class WeChatBase:
             f"[{self._lang('语音')}]",
         ]
 
-        if not [i for i in msgs if i.content[:4] in msgtypes]:
+        # 不能用 content[:4] 判断：中文 "[图片]" 恰好4字符，但英文客户端是
+        # "[Photo]"/"[File]" 等长度不一，得按完整前缀匹配
+        if not [i for i in msgs if any(i.content.startswith(t) for t in msgtypes)]:
             return msgs
 
         for msg in msgs:
             if msg.type not in ('friend', 'self'):
                 continue
-            if msg.content.startswith(f"[{self._lang('图片')}]") and savepic:
-                imgpath = self._download_pic(msg.control)
-                msg.content = imgpath if imgpath else msg.content
-            elif msg.content.startswith(f"[{self._lang('文件')}]") and savefile:
-                filepath = self._download_file(msg.control)
-                msg.content = filepath if filepath else msg.content
-            elif msg.content.startswith(f"[{self._lang('语音')}]") and savevoice:
-                voice_text = self._get_voice_text(msg.control)
-                msg.content = voice_text if voice_text else msg.content
+            # 单条媒体消息下载失败（超时/控件名对不上等）不能让整批消息获取失败，
+            # 保留原始的 [图片]/[文件] 占位内容继续
+            try:
+                if msg.content.startswith(f"[{self._lang('图片')}]") and savepic:
+                    imgpath = self._download_pic(msg.control)
+                    msg.content = imgpath if imgpath else msg.content
+                elif msg.content.startswith(f"[{self._lang('文件')}]") and savefile:
+                    filepath = self._download_file(msg.control)
+                    msg.content = filepath if filepath else msg.content
+                elif msg.content.startswith(f"[{self._lang('语音')}]") and savevoice:
+                    voice_text = self._get_voice_text(msg.control)
+                    msg.content = voice_text if voice_text else msg.content
+            except Exception as e:
+                wxlog.debug(f'媒体消息下载失败，保留占位内容: {e}')
             msg.info[1] = msg.content
         return msgs
     
@@ -455,24 +462,35 @@ class WeChatImage:
         if not os.path.exists(os.path.split(savepath)[0]):
             os.makedirs(os.path.split(savepath)[0])
             
-        if self.t_zoom.Exists(maxSearchSeconds=5):
+        # 点"另存为"按钮：按钮名在不同语言/版本下可能对不上，退回 Ctrl+S 快捷键
+        if self.t_save.Exists(maxSearchSeconds=3):
             self.t_save.Click(simulateMove=False)
         else:
-            raise TimeoutError('下载超时')
+            self._show()
+            self.api.SendKeys('{Ctrl}s')
+        # 系统"另存为"对话框的标题和按钮文字跟随 Windows 显示语言（中文系统是
+        # "另存为..."/"保存(&S)"，英文系统是 "Save As"/"&Save"），逐个尝试
         t0 = time.time()
+        handle = None
+        while not handle:
+            if time.time() - t0 > timeout:
+                raise TimeoutError('下载超时：未找到另存为对话框')
+            for title in ('另存为...', 'Save As', '另存為...'):
+                handle = FindWindow(name=title)
+                if handle:
+                    break
+        t0 = time.time()
+        edithandle = savehandle = None
         while True:
             if time.time() - t0 > timeout:
-                raise TimeoutError('下载超时')
-            handle = FindWindow(name='另存为...')
-            if handle:
-                break
-        t0 = time.time()
-        while True:
-            if time.time() - t0 > timeout:
-                raise TimeoutError('下载超时')
+                raise TimeoutError('下载超时：另存为对话框控件未就绪')
             try:
                 edithandle = [i for i in GetAllWindowExs(handle) if i[1] == 'Edit' and i[-1]][0][0]
-                savehandle = FindWinEx(handle, classname='Button', name='保存(&S)')[0]
+                for btn_name in ('保存(&S)', '&Save', 'Save'):
+                    found = FindWinEx(handle, classname='Button', name=btn_name)
+                    if found:
+                        savehandle = found[0]
+                        break
                 if edithandle and savehandle:
                     break
             except:
