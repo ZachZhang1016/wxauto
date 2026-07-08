@@ -444,7 +444,10 @@ def send_wechat_notice(wx, config, text):
         print(f"  没能打开并核实提醒目标会话 {accept_names}，提醒未发送")
         return False
     try:
-        wx.SendMsg(text)  # 发送到刚核实过的当前会话
+        # 必须显式传 who：who=None 时 wxauto 会先 FindWindow 任意一个 ChatWnd
+        # 独立窗口——正是我们的监听群窗口，会试图往群里发。传 who 后走主窗口
+        # 路径，且输入框按 Name=who 绑定，会话不对时直接失败而不是发错。
+        wx.SendMsg(text, who=who)
         _notify_ok_cache["who"] = who
         return True
     except Exception as e:
