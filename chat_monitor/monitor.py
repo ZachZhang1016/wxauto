@@ -347,54 +347,94 @@ def _read_log_lines(chat_name):
         return f.readlines()
 
 
-# 本进程内记住上次哪个名字发成功了，之后优先用它，省去每次都试错的等待
+# 本进程内记住上次核实成功的会话名，之后优先用它，省去每次都试错的等待
 _notify_ok_cache = {"who": None}
 
 
-def _resolve_notify_target(wx, candidates):
-    """在会话列表里找提醒目标实际显示的名字。
-    文件传输助手在中英文客户端里显示名不同（文件传输助手 / File Transfer），
-    按另一种语言的全名走微信搜索是搜不到的，所以优先在会话列表里做
-    大小写不敏感 + 子串匹配，拿到真实条目名后 SendMsg 就能走会话列表
-    精确点击，完全不依赖搜索。"""
+def _notify_name_ok(name, accept_names):
+    return bool(name) and any(
+        name == a or name.lower() == a.lower() for a in accept_names
+    )
+
+
+def _current_chat_ok(wx, accept_names):
+    """核实主窗口当前打开的会话确实是文件传输助手，防止把提醒发进别的群"""
+    try:
+        return _notify_name_ok(wx.CurrentChat(), accept_names)
+    except Exception:
+        return False
+
+
+def _open_notify_chat(wx, accept_names):
+    """打开文件传输助手会话并核实。返回核实过的会话名，失败返回 None。
+
+    文件传输助手的显示名随客户端语言变化（英文客户端叫 File Transfer），
+    按另一种语言的全名搜索找不到；而直接点搜索结果第一项/模糊匹配则可能
+    点进名字或聊天记录里恰好含关键词的其他群。所以：
+    1) 优先在会话列表里找显示名完全一致的条目，点它；
+    2) 找不到再走搜索，但只点名字与已知显示名完全一致的结果
+       （搜索建议行的名字等于输入的关键词本身，所以先试与关键词不同的名字）；
+    3) 无论哪条路，点开后都用 CurrentChat() 核实会话名，核实不过不算成功。"""
+    # 会话列表：显示名精确匹配（File Transfer 一旦发过消息就会常驻这里）
     try:
         sessions = [s for s in wx.GetSessionList(True) if s]
-    except Exception as e:
-        print(f"  读取会话列表失败，回退为直接按名字发送: {e}")
-        return None
-    for cand in candidates:
-        for s in sessions:
-            if s == cand or s.lower() == cand.lower():
+    except Exception:
+        sessions = []
+    for s in sessions:
+        if _notify_name_ok(s, accept_names):
+            try:
+                wx.SessionBox.ListItemControl(Name=s).Click(simulateMove=False)
+            except Exception:
+                continue
+            if _current_chat_ok(wx, accept_names):
                 return s
-    for cand in candidates:
-        for s in sessions:
-            if cand in s or s in cand:
-                return s
+
+    # 搜索：文件传输助手在搜索结果里挂在"联系人/Contacts"分组下，
+    # 无论用哪种语言的名字搜，展示的都是本客户端语言的显示名
+    for kw in accept_names:
+        try:
+            wx._show()
+            wx.UiaAPI.SendKeys('{Ctrl}f', waitTime=1)
+            wx.B_Search.SendKeys(kw, waitTime=1.5)
+        except Exception:
+            continue
+        # 先点与关键词不同的显示名（不会和"搜索建议"行重名），再试关键词本身
+        ordered = [n for n in accept_names if n != kw] + [kw]
+        for name in ordered:
+            try:
+                ctrl = wx.SessionBox.TextControl(Name=name)
+                if not ctrl.Exists(2):
+                    continue
+                ctrl.Click(simulateMove=False)
+            except Exception:
+                continue
+            if _current_chat_ok(wx, accept_names):
+                return name
+        try:
+            wx._refresh()  # 关掉搜索状态，别影响下一轮尝试
+        except Exception:
+            pass
     return None
 
 
 def send_wechat_notice(wx, config, text):
-    """给自己发一条微信。优先用上次成功的目标；第一次先在会话列表里解析出
-    目标的真实显示名，解析不到再挨个尝试 notify_to 里的名字。返回是否发送成功。"""
-    candidates = list(config.get("notify_to") or DEFAULT_NOTIFY_TO)
-    targets = []
-    if _notify_ok_cache["who"]:
-        targets.append(_notify_ok_cache["who"])
-    else:
-        resolved = _resolve_notify_target(wx, candidates)
-        if resolved:
-            targets.append(resolved)
-    for cand in candidates:
-        if cand not in targets:
-            targets.append(cand)
-    for who in targets:
-        try:
-            wx.SendMsg(text, who=who)
-            _notify_ok_cache["who"] = who
-            return True
-        except Exception as e:
-            print(f'  发送提醒到 "{who}" 失败，尝试下一个名字: {e}')
-    return False
+    """给自己发一条微信：打开并核实文件传输助手会话后，发送到当前会话。
+    找不到或核实不过时不发送（宁可不发也不能发错群）。返回是否发送成功。"""
+    accept_names = list(config.get("notify_to") or DEFAULT_NOTIFY_TO)
+    if _notify_ok_cache["who"] and _notify_ok_cache["who"] not in accept_names:
+        accept_names.insert(0, _notify_ok_cache["who"])
+
+    who = _open_notify_chat(wx, accept_names)
+    if not who:
+        print("  没能打开并核实文件传输助手会话，提醒未发送")
+        return False
+    try:
+        wx.SendMsg(text)  # 发送到刚核实过的当前会话
+        _notify_ok_cache["who"] = who
+        return True
+    except Exception as e:
+        print(f"  发送提醒失败: {e}")
+        return False
 
 
 def _parse_signal_json(text):
