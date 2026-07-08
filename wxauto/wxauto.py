@@ -313,7 +313,7 @@ class WeChat(WeChatBase):
         self._show()
         sessiondict = self.GetSessionList(True)
         if who in list(sessiondict.keys())[:-1]:
-            self.SessionBox.ListItemControl(RegexName=who).Click(simulateMove=False)
+            self.SessionBox.ListItemControl(RegexName=re.escape(who)).Click(simulateMove=False)
             return who
         else:
             self.UiaAPI.SendKeys('{Ctrl}f', waitTime=1)
@@ -330,7 +330,7 @@ class WeChat(WeChatBase):
                     self._refresh()
                     return False
                 wxlog.debug('选择搜索结果第一个')
-                target_control = search_result_control.Control(RegexName=f'.*{who}.*')
+                target_control = search_result_control.Control(RegexName=f'.*{re.escape(who)}.*')
                 chatname = target_control.Name
                 target_control.Click(simulateMove=False)
                 return chatname
@@ -571,7 +571,7 @@ class WeChat(WeChatBase):
         exists = uia.WindowControl(searchDepth=1, ClassName='ChatWnd', Name=who).Exists(maxSearchSeconds=0.1)
         if not exists:
             self.ChatWith(who)
-            self.SessionBox.ListItemControl(RegexName=who).DoubleClick(simulateMove=False)
+            self.SessionBox.ListItemControl(RegexName=re.escape(who)).DoubleClick(simulateMove=False)
         self.listen[who] = ChatWnd(who, self.language)
         self.listen[who].savepic = savepic
         self.listen[who].savefile = savefile
