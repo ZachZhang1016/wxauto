@@ -926,7 +926,12 @@ def main():
     parser.add_argument(
         "--test-alert",
         action="store_true",
-        help="给自己（文件传输助手）发一条测试消息，验证提醒通道是否可用",
+        help="给 notify_to 目标发一条测试消息，验证提醒通道是否可用",
+    )
+    parser.add_argument(
+        "--test-image",
+        metavar="CHAT",
+        help="下载指定群窗口里已加载的最近一张图片，验证存图流程（请先停掉常驻 monitor 再跑），例如: --test-image 斯达克🔥交流群",
     )
     args = parser.parse_args()
 
@@ -934,6 +939,36 @@ def main():
     chats_by_name = {c["name"]: c for c in config["chats"]}
     model = config.get("summary_model", "haiku")
     last_time = {}
+
+    # --test-image：对指定群窗口里最近一张已加载的图片走一遍完整下载流程，
+    # 用于验证"另存为"对话框在当前系统语言下能不能被正确驱动
+    if args.test_image:
+        name = args.test_image
+        try:
+            wx = WeChat(language=config.get("language", "cn"))
+            wx.AddListenChat(who=name, savepic=False, savefile=False, savevoice=False)
+        except Exception as e:
+            raise SystemExit(f"连接微信/打开聊天窗口失败: {e}")
+        chat_wnd = wx.listen[name]
+        msglist = chat_wnd.GetAllMessage()
+        pics = [
+            m for m in msglist
+            if m.type in ("friend", "self")
+            and isinstance(m.content, str)
+            and m.content.startswith(PHOTO_MARKERS)
+        ]
+        if not pics:
+            raise SystemExit(f'"{name}" 窗口内没有已加载的图片消息，翻到有图的位置再试')
+        print(f'找到 {len(pics)} 条图片消息，下载最近一条（发送者: {pics[-1].sender}）...')
+        try:
+            path = chat_wnd._download_pic(pics[-1].control)
+        except Exception as e:
+            raise SystemExit(f"❌ 下载失败: {e}")
+        if path and os.path.exists(path) and os.path.getsize(path) > 0:
+            print(f"✅ 下载成功: {path} ({os.path.getsize(path)} 字节)")
+        else:
+            raise SystemExit(f"❌ 下载返回了无效结果: {path!r}")
+        return
 
     # --test-alert 只需要连上微信，不需要建立监听
     if args.test_alert:
